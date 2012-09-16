@@ -1,0 +1,5 @@
+<Files admin.php>
+AuthType Basic
+AuthName "MobileOTP Verwaltung"
+require ldap-user michael volker karin anne
+</Files>
