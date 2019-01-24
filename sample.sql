@@ -7,18 +7,23 @@ CREATE TABLE IF NOT EXISTS "otp" (
   "imappass" tinytext NOT NULL,
   "validUntil" int(11) NOT NULL,
   PRIMARY KEY ("id")
-) AUTO_INCREMENT=14 ;
+);
+
+CREATE TABLE IF NOT EXISTS "otp_browser" (
+  "id" int(11) unsigned NOT NULL AUTO_INCREMENT,
+  "username" tinytext NOT NULL,
+  "cookie" varchar(64) NOT NULL, -- maybe replace with webcrypto + indexdb pubkey, but needs client-side JS support
+  "name" varchar(60) NOT NULL,
+  "createdAt" int(11) NOT NULL,
+  "lastUsed" int(11) NOT NULL,
+  "confirmed" tinyint(1) NOT NULL, -- set to false for autoreg devices without otp
+  PRIMARY KEY ("id"),
+  KEY "username" ("username"),
+  UNIQUE KEY "username_cookie" ("username", "cookie")
+);
+
 
 USE otp;
-
-CREATE TABLE IF NOT EXISTS "phones" (
-  "id" int(11) NOT NULL AUTO_INCREMENT,
-  "user_id" int(11) NOT NULL,
-  "phonenumber" varchar(64) NOT NULL,
-  "name" varchar(60) NOT NULL,
-  PRIMARY KEY ("id"),
-  KEY "user_id" ("user_id")
-) AUTO_INCREMENT=9 ;
 
 CREATE TABLE IF NOT EXISTS "users" (
   "id" int(11) NOT NULL AUTO_INCREMENT,
@@ -27,7 +32,16 @@ CREATE TABLE IF NOT EXISTS "users" (
   "encryptedPassword" text NOT NULL,
   PRIMARY KEY ("id"),
   UNIQUE KEY "username" ("username")
-) AUTO_INCREMENT=3 ;
+);
+
+CREATE TABLE IF NOT EXISTS "phones" (
+  "id" int(11) NOT NULL AUTO_INCREMENT,
+  "user_id" int(11) NOT NULL,
+  "phonenumber" varchar(64) NOT NULL,
+  "name" varchar(60) NOT NULL,
+  PRIMARY KEY ("id"),
+  KEY "user_id" ("user_id")
+);
 
 USE gammu;
 

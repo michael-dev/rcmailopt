@@ -6,4 +6,6 @@ Von fremden oder nicht vertrauenswürdigen Rechnern bitte <a href="https://{$_SE
 </div>
 EOT;
 
-?>
+$rcmail_config['otp_salt'] = "rcotp";
+$rcmail_config['otp_whiteliste'] = Array(); /* subnet-masks, dns names
+
