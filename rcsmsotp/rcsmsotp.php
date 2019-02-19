@@ -27,9 +27,21 @@ class rcsmsotp extends rcube_plugin
     $rcmail = rcmail::get_instance();
     $otpSuccess = $this->authOtp($rcmail, $args);
 
-    if ($this->authBrowser($rcmail, $args, $otpSuccess) === false) {
-      $args["abort"] = true;
-      $args["error"] = "Browser unbekannt";
+    /** Ideas
+     * a) require confirmed browser as in pre-used, whitelisted ip or otp done
+     * b) add first device (not yet implemented)
+     * c) add all devices (notify-only)
+     * d) disabled
+     */
+    // null or 0: disabled, 1: optional (add and notify new browser but do not block), 2: required for login
+    $doAuthBrowser = $rcmail->config->get('otp_auth_browser');
+    if ($doAuthBrowser) {
+      $browserSuccess = $this->authBrowser($rcmail, $args, $otpSuccess);
+      $needConfirmedBrowser = ($doAuthBrowser == 2);
+      if ($browserSuccess === false && $needConfirmedBrowser) {
+        $args["abort"] = true;
+        $args["error"] = "Browser unbekannt";
+      }
     }
     return $args;
   }
@@ -50,60 +62,79 @@ class rcsmsotp extends rcube_plugin
     return $ret;
   }
 
-  /** return false on blocked login, true on known browser and null if login is not blocked but new browser */
+  /** return
+   * a) true on known or confirmed browser
+   * b) false else
+   */
   private function authBrowser(&$rcmail, &$args, $trustedLoginSuccess) {
-    // get cookie to identify browser for this user
+    // static salt + salt from browser + username -> cookieName
+    // get cookie to identify browser for this user but avoid trackable names
     $cookieSalt = $rcmail->config->get('otp_salt', "otp");
-    $cookieName = "rcmail_otp_".sha1($cookieSalt."#".$args["user"]);
-    $doAuthBrowser = $rcmail->config->get('otp_auth_browser'); // null or 0: disabled, 1: optional, 2: required for login
 
-    if (!$doAuthBrowser)
-      return NULL; // feature disabled
-    $needConfirmed = ($doAuthBrowser == 2);
+    $cookieNameSalt = "rcmail_otp_salt";
+    if (isset($_COOKIES[$cookieNameSalt])) {
+      $cookieNameSaltValue = (string) $_COOKIES[$cookieNameSalt];
+    } else {
+      $cookieNameSaltValue = bin2hex(random_bytes(4));
+      rcube_utils::setcookie($cookieNameSalt, $cookieNameSaltValue, time() + 100 * 365 * 24 * 3600);
+    }
+    $cookieSalt .= "#".substr($cookieNameSaltValue,0,8);
+
+    $cookieName = "rcmail_otp_".hash_hmac("sha256", $args["user"], $cookieSalt);
 
     // check if this is a known browser
     if (isset($_COOKIES[$cookieName])) {
       $cookieValue = $_COOKIES[$cookieName];
-      $dbValue = sha1($cookieSalt."#".$cookieValue);
+      $dbValue = hash_hmac("sha256", $cookieValue, $cookieSalt);
 
-      // FIXME add maxAge check?
       $res = $rcmail->db->query("SELECT * FROM roundcubemail.otp_browser
-                                  WHERE otp_browser.username = ? AND otp_browser.cookie = ?".($needConfirmed ? " AND otp_browser.confirmed" : ""),
+                                 WHERE otp_browser.username = ? AND otp_browser.cookie = ?",
                                 array($args["user"], $dbValue));
       $dbres = $rcmail->db->fetch_assoc($res);
-      if ($dbres) {
-        $rcmail->db->query("UPDATE roundcubemail.otp_browser WHERE otp_browser.username = ? AND otp_browser.cookie = ? SET lastUsed = ?",
-                           array($args["user"], $dbValue, time()));
-        return true;
+    } else {
+      $dbres = false;
+    }
+
+    // check if this is trusted
+    if ($dbres && $dbres["confirmed"]) {
+      $trusted = true;
+    } else {
+      // check ip against whitelist (like, 172.16.0.0/16, 192.168.0.0/16, some DNS names)
+      $whitelist = $rcmail->config->get('otp_whitelist', Array());
+      $trusted = false;
+      $ip = rcube_utils::remote_addr();
+      foreach ($whiteliste as $wi) {
+        if (self::cidr_match($ip, $wi)) {
+          $trusted = true;
+          break;
+        }
       }
+      $trusted = $trusted || $optSuccess;
     }
 
-    // this is a new browser, so generate a cookie
-    $cookieValue = bin2hex(random_bytes(30));
-    $dbValue = sha1($cookieSalt."#".$cookieValue);
-    $browserName = $_SERVER['HTTP_USER_AGENT']; // FIXME ask user -> link to portal?, GeoIP2
+    if (!$dbres) {
+      // this is a new browser, so generate a cookie
+      $cookieValue = bin2hex(random_bytes(30));
+      $dbValue = hash_hmac("sha256", $cookieValue, $cookieSalt);
+      $browserName = $_SERVER['HTTP_USER_AGENT']; // FIXME ask user -> link to portal?, GeoIP2
 
-    // check ip against whitelist (like, 172.16.0.0/16, 192.168.0.0/16, dynamic.fami-braun.de, ilmenau.fami-braun.de, jena.fami-braun.de, luebeck.fami-braun.de
-    $whitelist = $rcmail->config->get('otp_whitelist', Array());
-    $trustedRemoteAddr = false;
-    $ip = rcube_utils::remote_addr();
-    foreach ($whiteliste as $wi) {
-      $trustedRemoteAddr = false;
+      // if login is going to fail anyway, do not bother to register and send back cookie to hide this
+      $registerBrowser = $otpSuccess || $rcmail->login($args['user'], $args['pass'], $args['host'], $args['cookiecheck']);
+      if ($registerBrowser) {
+        $rcmail->db->query("INSERT INTO roundcubemail.otp_browser (username, cookie, name, createdAt, lastUsed, confirmed) VALUES (?, ?, ?, ?, ?)",
+          array($args["user"], $dbValue, $browserName, time(), time(), ($trusted ? 1 : 0)));
+        $dbres = [ "confirmed" => ($trusted ? 1 : 0) ];
+        // send notification
+        if (!$trusted)
+          $this->notifyNewBrowser($rcmail, $browserName);
+      }
+    } else {
+      $rcmail->db->query("UPDATE roundcubemail.otp_browser WHERE otp_browser.username = ? AND otp_browser.cookie = ? SET lastUsed = ?, confirmed => ?",
+                         array($args["user"], $dbValue, time(), $trusted ? 1 : 0));
     }
-
-    // if login is going to fail anyway, do not bother to register and send back cookie to hide this
-    $registerBrowser = $otpSuccess || $rcmail->login($args['user'], $args['pass'], $args['host'], $args['cookiecheck']);
-    if ($registerBrowser) {
-      $rcmail->db->query("INSERT INTO roundcubemail.otp_browser (username, cookie, name, createdAt, lastUsed, confirmed) VALUES (?, ?, ?, ?, ?)",
-                         array($args["user"], $dbValue, $browserName, time(), time(), $trustedLoginSuccess ? 1 : 0));
-      // send notification
-      if (!$trustedLoginSuccess)
-        $this->notifyNewBrowser($rcmail, $browserName);
-    }
-
     rcube_utils::setcookie($cookieName, $cookieValue, time() + 100 * 365 * 24 * 3600);
 
-    return NULL; 
+    return $trusted;
   }
 
   private function notifyNewBrowser(&$rcmail, $browserName) {
@@ -150,27 +181,68 @@ https://webmail.fami-braun.de';
     $SENDMAIL->deliver_message($MAIL_MIME);
   }
 
+  private static function maskIp($ip, $ipNumBytes, $mask) {
+    $ip = inet_pton($ip);
+    $ip = current(unpack("A".$ipNumBytes, $ip));
+
+    for ($i = 0; $i < $ipNumBytes; $i++, $mask -= 8) {
+      if ($mask >= 8) continue;
+      // trim some bits
+      $l_mask = 0;
+      if ($mask > 0)
+        $l_mask = 255 << (8-$mask);
+      $ip[$i] = chr(ord($ip[$i]) & $l_mask);
+    }
+
+    return current(unpack("H".($ipNumBytes*2), $ip));
+  }
+
   /**
    * Check the client IP against a value in CIDR notation.
    */
   private static function cidr_match($ip, $cidr)
   {
-      if (strpos($cidr, '/') === false) {
-          $cidr .= '/';
+    if (strpos($cidr, '/') === false) {
+        $cidr .= '/';
+    }
+    list($subnet, $bits) = explode('/', $cidr,2);
+
+    if (filter_var($subnet, FILTER_VALIDATE_IP)) {
+      $subnets = [ $subnet ];
+    } else if (filter_var($subnet, FILTER_VALIDATE_DOMAIN,  FILTER_FLAG_HOSTNAME )) {
+      $records = dns_get_record($subnet, DNS_A + DNS_AAAA);
+      if ($records === false)
+        return false;
+      $subnets = [];
+      foreach ($records as $record) {
+        if ($records["type"] == "A")
+          $subnets[] = $records["ip"];
+        elseif ($records["type"] == "AAAA")
+          $subnets[] = $records["ipv6"];
       }
-      list($subnet, $bits) = explode('/', $cidr,2);
-// handle multiple ips for dns name
+      $bits = false;
+    } else {
+      return false;
+    }
 
-      if (!filter_var($subnet, FILTER_VALIDATE_IP) && filter_var($subnet, FILTER_VALIDATE_DOMAIN,  FILTER_FLAG_HOSTNAME ))
-        $subnet=gethostbyname($subnet);
-          && !filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4))
+    $ipIsIPv4 = !!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4);
+    foreach ($subnets as $subnet) {
+      $subnetIsIPv4 = !!filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4);
+      if ($subnetIsIPv4 != $ipIsIPv4) continue;
+      if ($bits === false || $bits === "" || $bits >= 32)
+        $mask = 128;
+      else
+        $mask = $bits;
+      $maskedIp = self::maskIp($ip, ($ipIsIPv4 ? 4 : 16), $mask);
+      $maskedSubnet = self::maskIp($subnet, ($subnetIsIPv4 ? 4 : 16), $mask);
 
-      $ip = ip2long($ip);
-      $subnet = ip2long($subnet);
-      $mask = -1 << (32 - $bits);
-      $subnet &= $mask; # nb: in case the supplied subnet wasn't correctly aligned
-      return ($ip & $mask) == $subnet;
+      if ($maskedIp == $maskedSubnet)
+        return true; # matched
+    }
+
+    return false;
   }
 
 }
 
+// vim: set tabstop=2 expandtab shiftwidth=2:
