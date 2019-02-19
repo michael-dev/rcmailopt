@@ -131,6 +131,7 @@ class rcsmsotp extends rcube_plugin
   }
 
   public function login_after($args) {
+    $rcmail = rcmail::get_instance();
     // actually register new browser
     if ($this->registerBrowserPending) {
       $dbValue = $this->registerBrowserPending["dbValue"];
