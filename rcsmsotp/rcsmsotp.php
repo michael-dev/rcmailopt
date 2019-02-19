@@ -33,8 +33,8 @@ class rcsmsotp extends rcube_plugin
      * c) add all devices (notify-only)
      * d) disabled
      */
-    // null or 0: disabled, 1: optional (add and notify new browser but do not block), 2: required for login
-    $doAuthBrowser = $rcmail->config->get('otp_auth_browser');
+    // null or 0: disabled, 1: report-only, 2: required for login
+    $doAuthBrowser = $rcmail->config->get('otp_auth_browser', 0);
     if ($doAuthBrowser) {
       $browserSuccess = $this->authBrowser($rcmail, $args, $otpSuccess);
       $needConfirmedBrowser = ($doAuthBrowser == 2);

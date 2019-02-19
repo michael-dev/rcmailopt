@@ -7,5 +7,5 @@ Von fremden oder nicht vertrauenswürdigen Rechnern bitte <a href="https://{$_SE
 EOT;
 
 $rcmail_config['otp_salt'] = "rcotp";
-$rcmail_config['otp_whiteliste'] = Array(); /* subnet-masks, dns names
-
+$rcmail_config['otp_whitelist'] = Array(); /* subnet-masks, dns names and alike */
+$rcmail_config['otp_auth_browser'] = 0; /* 0: disabled, 1: report-only, 2: enforce */
