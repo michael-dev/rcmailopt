@@ -4,12 +4,14 @@ class rcsmsotp extends rcube_plugin
 {
   public $noajax = true;
   public $noframe = true;
-  public $task = 'login|logout|settings';
+  public $task = 'login|logout';
+  private $registerBrowserPending = false;
 
   function init()
   {
     $this->add_hook('template_object_loginform', array($this, 'add_otp_info'));
     $this->add_hook('authenticate', array($this, 'authenticate'));
+    $this->add_hook('login_after', array($this, 'login_after'));
   }
 
   public function add_otp_info($arg)
@@ -67,6 +69,8 @@ class rcsmsotp extends rcube_plugin
    * b) false else
    */
   private function authBrowser(&$rcmail, &$args, $trustedLoginSuccess) {
+    $this->registerBrowserPending = false;
+
     // static salt + salt from browser + username -> cookieName
     // get cookie to identify browser for this user but avoid trackable names
     $cookieSalt = $rcmail->config->get('otp_salt', "otp");
@@ -116,18 +120,7 @@ class rcsmsotp extends rcube_plugin
       // this is a new browser, so generate a cookie
       $cookieValue = bin2hex(random_bytes(30));
       $dbValue = hash_hmac("sha256", $cookieValue, $cookieSalt);
-      $browserName = $_SERVER['HTTP_USER_AGENT']; // FIXME ask user -> link to portal?, GeoIP2
-
-      // if login is going to fail anyway, do not bother to register and send back cookie to hide this
-      $registerBrowser = $otpSuccess || $rcmail->login($args['user'], $args['pass'], $args['host'], $args['cookiecheck']);
-      if ($registerBrowser) {
-        $rcmail->db->query("INSERT INTO roundcubemail.otp_browser (username, cookie, name, createdAt, lastUsed, confirmed) VALUES (?, ?, ?, ?, ?)",
-          array($args["user"], $dbValue, $browserName, time(), time(), ($trusted ? 1 : 0)));
-        $dbres = [ "confirmed" => ($trusted ? 1 : 0) ];
-        // send notification
-        if (!$trusted)
-          $this->notifyNewBrowser($rcmail, $browserName);
-      }
+      $this->registerBrowserPending = [ "dbValue" => $dbValue, "trusted" => $trusted ];
     } else {
       $rcmail->db->query("UPDATE roundcubemail.otp_browser WHERE otp_browser.username = ? AND otp_browser.cookie = ? SET lastUsed = ?, confirmed => ?",
                          array($args["user"], $dbValue, time(), $trusted ? 1 : 0));
@@ -135,6 +128,22 @@ class rcsmsotp extends rcube_plugin
     rcube_utils::setcookie($cookieName, $cookieValue, time() + 100 * 365 * 24 * 3600);
 
     return $trusted;
+  }
+
+  public function login_after($args) {
+    // actually register new browser
+    if ($this->registerBrowserPending) {
+      $dbValue = $this->registerBrowserPending["dbValue"];
+      $trusted = $this->registerBrowserPending["trusted"];
+      $browserName = $_SERVER['HTTP_USER_AGENT']; // FIXME ask user -> link to portal?, GeoIP2
+
+      $rcmail->db->query("INSERT INTO roundcubemail.otp_browser (username, cookie, name, createdAt, lastUsed, confirmed) VALUES (?, ?, ?, ?, ?)",
+                         array($args["user"], $dbValue, $browserName, time(), time(), ($trusted ? 1 : 0)));
+      // send notification
+      if (!$trusted)
+        $this->notifyNewBrowser($rcmail, $browserName);
+      $this->registerBrowserPending = false;
+    }
   }
 
   private function notifyNewBrowser(&$rcmail, $browserName) {
