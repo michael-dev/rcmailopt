@@ -100,7 +100,7 @@ if (isset($_REQUEST["action"])) {
         $auth = false;
       }
     }
-    $_REQUEST = unserialize(base64_decode($request));
+    $_REQUEST = json_decode(base64_decode($request));
     $_REQUEST["action"] = $action;
   }
 
@@ -156,7 +156,7 @@ if (isset($_REQUEST["action"])) {
     if (!isset($_REQUEST["request"])) {
       $code = make_rand();
       $validuntil = time() + 3600;
-      $request = base64_encode(serialize($_REQUEST));
+      $request = base64_encode(json_encode($_REQUEST));
       $verifycode = make_ssha_password($salt."|".$validuntil."|".$code."|".$_REQUEST["valphone"]."|".$request);
       $details = $_REQUEST; unset($details["pin"]); unset($details["pin2"]); unset($details["opin"]); unset($details["valphone"]); unset($details["action"]);
       send_sms($_REQUEST["valphone"], "Sie wollen die Aktion ".$_REQUEST["action"]." ausführen. Details: ".json_encode($details).". Der Code lautet $code.");

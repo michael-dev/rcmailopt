@@ -157,5 +157,47 @@ foreach ($phones as $phone) {
 <?
  }
 ?>
+<h3>Browser entfernen</h3>
+<?
+
+$getphonestm = $pdo->prepare("SELECT * FROM phones WHERE user_id = :user_id");
+$getphonestm->execute(array("user_id" => $users[0]["id"])) or die ("Datenbankfehler: ".print_r($getphonestm->errorInfo(),true));
+$phones = $getphonestm->fetchAll();
+
+if (count($phones) == 0) {
+?>
+<b>Keine Telefone eintragen.</b>
+<?
+} else {
+?>
+<table border="0">
+<tr><th colspan="2">Telefonnummer</th></tr>
+<?
+foreach ($phones as $phone) {
+?>
+<tr><td>
+<form action="admin.php" method="POST">
+ <input type="hidden" name="action" value="delphone">
+ <input type="hidden" name="phone" value="<?=$phone["phonenumber"];?>">
+ <input type="submit" value="Telefonnummer entfernen">
+</form>
+</td><td><?=$phone["phonenumber"];?> (<?=$phone["name"];?>)</td></tr>
+<?
+}
+?>
+</table>
+<?
+}
+?>
+<h3>Bezeichnung der Telefonnummer ändern</h3>
+<form action="admin.php" method="POST">
+ <input type="hidden" name="action" value="setphone">
+ <label for="phone">Telefonnummer</label>: <select name="phone" size="1"><?foreach ($phones as $phone) echo "<option value=\"".$phone["phonenumber"]."\">".$phone["phonenumber"]." (".$phone["name"].")</option>";?></select><br/>
+ <label for="name">Bezeichnung</label>: <input type="text" name="name"><br/>
+ <input type="submit" value="Bezeichnung ändern">
+</form>
+<?
+ }
+?>
  </body>
 </html>
